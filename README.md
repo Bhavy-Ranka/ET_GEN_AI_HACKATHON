@@ -1,12 +1,12 @@
 # ET-Gen-AI-hackathon-
 
-# 🏙️ AI Smart City — Intelligent Civic Grievance Management System
+# Intelligent Civic Grievance Management System
 
 > An AI-powered multi-agent platform for automated civic issue detection, deduplication, categorization, and resolution tracking — built for Indian smart cities.
 
 ---
 
-## 📌 Problem Statement
+##  Problem Statement
 
 Citizens report civic issues (potholes, garbage, broken lights, water leakage) through fragmented, manual channels. Municipalities receive thousands of duplicate complaints, lack priority intelligence, and have no automated triage. This results in SLA breaches, wasted resources, and unresolved issues.
 
@@ -27,7 +27,7 @@ Citizens report civic issues (potholes, garbage, broken lights, water leakage) t
 
 ---
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
 User (Streamlit Frontend)
@@ -77,7 +77,7 @@ SQLite    AI Pipeline (gen_ai/)
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 ET/
@@ -101,7 +101,7 @@ ET/
 
 ---
 
-## ⚙️ Setup & Installation
+##  Setup & Installation
 
 ### Prerequisites
 - Python 3.10+
@@ -141,7 +141,7 @@ This starts:
 
 ---
 
-## 🔐 Authentication
+##  Authentication
 
 | Role | Access |
 |------|--------|
@@ -204,7 +204,7 @@ Each complaint card shows image, description, reporter, location, and a **Mark R
 ---
 
 
-## 👥 Team
+##  Team
 
 - **Bhavy Ranka**
 
