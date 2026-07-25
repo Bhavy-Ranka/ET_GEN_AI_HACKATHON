@@ -148,12 +148,6 @@ This starts:
 | Citizen | Submit complaints, view results |
 | Admin (`BHAVY`, `SMARTYY`) | Dashboard with all complaints, severity triage, resolve issues |
 
-
-        ADMIN_CREDENTIALS = {
-            "BHAVY": "2HJR3Y37Dbvhsd@#jnde",
-            "SMARTYY": "238guwdd@#Eekjdkui"
-        }
-
 Admin credentials are environment-hardened. Regular users sign up via the UI.
 
 ---
