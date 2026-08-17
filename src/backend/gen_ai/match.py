@@ -16,7 +16,13 @@ except ModuleNotFoundError:
 try:
     import google.genai as google_genai
 except ModuleNotFoundError:
-    genai = None
+    google_genai = None
+
+try:
+    from model import ensure_collection, ensure_indexes
+except ImportError:
+    ensure_collection = None
+    ensure_indexes = None
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB = os.getenv("MONGO_DB", "hack")
@@ -42,7 +48,8 @@ ALLOWED_SEVERITIES = {"low": "Low", "medium": "Medium", "high": "High"}
 DEFAULT_CATEGORY = "Others"
 DEFAULT_SEVERITY = "Medium"
 MAX_CANDIDATES = 5
-SIMILARITY_THRESHOLD = 0.20
+SIMILARITY_THRESHOLD = 0.35
+
 
 
 _GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
@@ -76,16 +83,17 @@ def _get_generate_client():
         return _generate_client
     _generate_client = google_genai.Client(
         api_key=_GEMINI_API_KEY,
-        http_options={"api_version": "v1"},
+        http_options={"api_version": "v1beta"},
     )
+
     return _generate_client
 
 
 def _get_groq_client():
-    api_key = os.getenv("GROK_API_KEY", "").strip()
+    api_key = (os.getenv("GROK_API_KEY") or os.getenv("GROQ_API_KEY") or "").strip()
     if not api_key:
         raise RuntimeError(
-            "GROQ_API_KEY is not set. Please export it before calling llm_location_check()."
+            "GROK_API_KEY is not set. Please export it before calling llm_location_check()."
         )
     return Groq(api_key=api_key)
 
@@ -96,7 +104,16 @@ def _get_mongo_collection():
         raise RuntimeError("pymongo is not installed. Install it with: pip install pymongo")
     if _mongo_client is None:
         _mongo_client = MongoClient(MONGO_URI)
-    return _mongo_client[MONGO_DB][MONGO_COLLECTION]
+    db = _mongo_client[MONGO_DB]
+    if ensure_collection is not None:
+        try:
+            collection = ensure_collection(db, MONGO_COLLECTION)
+            if ensure_indexes is not None:
+                ensure_indexes(collection)
+            return collection
+        except Exception:
+            pass
+    return db[MONGO_COLLECTION]
 
 
 def _normalize_whitespace(text):
@@ -232,7 +249,7 @@ def _cosine_distance(vector_a, vector_b):
 
 def _fetch_candidates_vector_search(collection, vector, category, include_category=True):
     if not MONGO_VECTOR_INDEX:
-        return []
+        return None
     filters = {"status": "open"}
     if include_category:
         filters["category"] = category
@@ -253,27 +270,50 @@ def _fetch_candidates_vector_search(collection, vector, category, include_catego
                 "embedding": 1,
                 "status": 1,
                 "category": 1,
+                "report_count": 1,
+                "priority": 1,
+                "severity": 1,
             }
         },
     ]
-    return list(collection.aggregate(pipeline))
+    try:
+        return list(collection.aggregate(pipeline))
+    except Exception as exc:
+        print(f"[WARNING] MongoDB $vectorSearch failed (index '{MONGO_VECTOR_INDEX}' may not exist): {exc}. Falling back to scan mode.")
+        return None
 
 
 def _fetch_candidates_scan(collection, category, include_category=True):
     query = {"status": "open"}
     if include_category:
         query["category"] = category
-    cursor = (
-        collection.find(query, {"formatted_location": 1, "embedding": 1, "status": 1, "category": 1})
-        .limit(MONGO_CANDIDATE_SCAN_LIMIT)
-    )
-    return list(cursor)
+    try:
+        cursor = (
+            collection.find(
+                query,
+                {
+                    "formatted_location": 1,
+                    "embedding": 1,
+                    "status": 1,
+                    "category": 1,
+                    "report_count": 1,
+                    "priority": 1,
+                    "severity": 1,
+                },
+            )
+            .limit(MONGO_CANDIDATE_SCAN_LIMIT)
+        )
+
+        return list(cursor)
+    except Exception as exc:
+        print(f"[WARNING] MongoDB candidate scan failed: {exc}")
+        return []
 
 
 def _fetch_candidates(collection, vector, category, include_category=True):
     if MONGO_VECTOR_INDEX:
         candidates = _fetch_candidates_vector_search(collection, vector, category, include_category=include_category)
-        if candidates:
+        if candidates is not None and len(candidates) > 0:
             return candidates
     return _fetch_candidates_scan(collection, category, include_category=include_category)
 
@@ -290,14 +330,18 @@ def _rank_candidates(vector, candidates):
     return scored[:MAX_CANDIDATES]
 
 
-# Embedding models to try in order — text-embedding-004 needs paid tier,
-# embedding-001 works on all free-tier keys.
 _EMBEDDING_MODELS = [
     "models/gemini-embedding-001",
     "models/text-embedding-004",
 ]
 
 def get_embedding(text):
+    if not _GEMINI_API_KEY:
+        print("[WARNING] GEMINI_API_KEY is not set. Generating fallback deterministic text hash embedding.")
+        import hashlib
+        h = hashlib.sha256(text.encode("utf-8")).digest()
+        return [((b / 255.0) * 2.0 - 1.0) for b in (h * 24)[:768]]
+
     client = _get_embed_client()
     last_exc = None
     for model in _EMBEDDING_MODELS:
@@ -310,14 +354,24 @@ def get_embedding(text):
         except Exception as exc:
             print(f"Embedding model {model!r} failed: {exc}")
             last_exc = exc
-    raise RuntimeError(f"All embedding models failed. Last error: {last_exc}")
+
+    import hashlib
+    h = hashlib.sha256(text.encode("utf-8")).digest()
+    return [((b / 255.0) * 2.0 - 1.0) for b in (h * 24)[:768]]
+
 
 
 def llm_location_check(new_loc, existing_locs_with_ids):
     """
-    Sends the new location and a list of candidate locations to Groq.
-    Returns the ID of the matching location, or None.
+    Sends the new location and a list of candidate locations to Groq or Gemini LLM.
+    Returns a dict: {"match_found": bool, "matching_id": str or None, "reason": str}
     """
+    if not _normalize_whitespace(new_loc):
+        return {"match_found": False, "matching_id": None, "reason": "No location"}
+
+    if not existing_locs_with_ids:
+        return {"match_found": False, "matching_id": None, "reason": "No candidates"}
+
     prompt = f"""
     You are a location matching expert for a city management system.
     New Report Location: "{new_loc}"
@@ -326,44 +380,55 @@ def llm_location_check(new_loc, existing_locs_with_ids):
     {json.dumps(existing_locs_with_ids, indent=2)}
     
     Task: Determine if the New Report Location refers to the SAME physical spot as any of the candidates.
-    Consider landmarks, sectors, and common variations (e.g., 'Main Gate' and 'Entrance').
+    Consider landmarks, sectors, street names, and common variations (e.g., 'Main Gate' and 'Entrance').
     
     Return ONLY a JSON object with:
     {{
-        "match_found": boolean,
-        "matching_id": string or null,
+        "match_found": true/false,
+        "matching_id": "matching candidate id or null",
         "reason": "short explanation"
     }}
     """
 
-    if not _normalize_whitespace(new_loc):
-        return {"match_found": False, "matching_id": None, "reason": "No location"}
+    if Groq is not None:
+        try:
+            groq_client = _get_groq_client()
+            chat_completion = groq_client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="llama-3.3-70b-versatile",
+                response_format={"type": "json_object"},
+            )
+            return _safe_json_loads(chat_completion.choices[0].message.content)
+        except Exception as exc:
+            print(f"[LOCATION CHECK] Groq LLM failed ({exc}); trying Gemini fallback...")
 
-    try:
-        groq_client = _get_groq_client()
-        chat_completion = groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",  # Groq is very fast for this
-            response_format={"type": "json_object"},
-        )
-        return _safe_json_loads(chat_completion.choices[0].message.content)
-    except Exception as exc:
-        match_id = _simple_location_match(new_loc, existing_locs_with_ids)
-        return {
-            "match_found": match_id is not None,
-            "matching_id": match_id,
-            "reason": f"LLM fallback: {exc}",
-        }
+    if google_genai is not None and _GEMINI_API_KEY:
+        try:
+            gen_client = _get_generate_client()
+            resp = gen_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config={"response_mime_type": "application/json"}
+            )
+            return _safe_json_loads(resp.text)
+        except Exception as exc:
+            print(f"[LOCATION CHECK] Gemini LLM failed ({exc}); using fuzzy string matcher fallback.")
 
+    match_id = _simple_location_match(new_loc, existing_locs_with_ids)
+    return {
+        "match_found": match_id is not None,
+        "matching_id": match_id,
+        "reason": "Fuzzy token string match fallback",
+    }
 
-# ... (keep existing imports and helper functions) ...
 
 def process_grievance_with_llm_filter(new_json):
     """
     Returns a tuple: (result_data, message)
+    Handles candidate ranking, location matching, embedding similarity,
+    and report_count + dynamic severity escalation upon deduplication.
     """
     normalized = _normalize_payload(new_json)
-    # Extract user_name from payload
     user_name = new_json.get("user_name", "Anonymous")
 
     if MongoClient is None:
@@ -376,15 +441,15 @@ def process_grievance_with_llm_filter(new_json):
     candidates = _fetch_candidates(collection, new_vector, normalized["category"], include_category=True)
     ranked_candidates = _rank_candidates(new_vector, candidates)
 
-    # 2. LLM Location Check (Stage 2)
+    # 2. Location Check (Stage 2)
     loc_candidates = [
         {"id": str(candidate["_id"]), "location": candidate.get("formatted_location", "")}
         for candidate, _ in ranked_candidates
     ]
     loc_result = llm_location_check(normalized["formatted_location"], loc_candidates)
 
-    if loc_result["match_found"]:
-        match_id = str(loc_result["matching_id"])
+    if loc_result.get("match_found"):
+        match_id = str(loc_result.get("matching_id"))
         match_entry = next(
             (
                 (candidate, distance)
@@ -394,32 +459,47 @@ def process_grievance_with_llm_filter(new_json):
             None,
         )
 
-        # 3. Final Similarity Check (Stage 3)
-        # Only increment if it's NOT 'resolved' (not done)
         if match_entry is not None:
             candidate, match_distance = match_entry
             if match_distance < SIMILARITY_THRESHOLD:
                 current_status = candidate.get("status", "open")
 
                 if current_status == "resolved":
-                    # If the previous one is already 'done', treat this as a brand new issue
                     save_as_new_issue(collection, normalized, new_vector, user_name, new_json)
-                    return normalized, "Grievance registered successfully ."
+                    return normalized, "Grievance registered as a new report."
 
-                update = {"$inc": {"report_count": 1}}
-                if candidate.get("priority") is None:
-                    update["$set"] = {"priority": _severity_to_priority(normalized["severity"]) + 1}
+                new_report_count = candidate.get("report_count", 1) + 1
+                orig_severity = candidate.get("severity") or normalized["severity"]
+                base_priority = _severity_to_priority(orig_severity)
+                
+                new_priority = base_priority + (new_report_count - 1)
+                
+                if new_report_count >= 4 or new_priority >= 5:
+                    new_severity = "High"
+                elif new_priority >= 3 or new_report_count >= 2:
+                    new_severity = "Medium" if orig_severity == "Low" else orig_severity
                 else:
-                    update["$inc"]["priority"] = 1
-                collection.update_one({"_id": candidate["_id"]}, update)
+                    new_severity = orig_severity
+
+                update_fields = {
+                    "report_count": new_report_count,
+                    "priority": new_priority,
+                    "severity": new_severity,
+                }
+                collection.update_one({"_id": candidate["_id"]}, {"$set": update_fields})
+
+                normalized["report_count"] = new_report_count
+                normalized["priority"] = new_priority
+                normalized["severity"] = new_severity
+
                 return (
                     normalized,
-                    f"This issue is already registered. We have updated the report count. (ID: {candidate['_id']})",
+                    f"This issue is already registered. Report count updated to {new_report_count} (Severity: {new_severity}). (ID: {candidate['_id']})",
                 )
 
-    # If no match found or location check failed
     save_as_new_issue(collection, normalized, new_vector, user_name, new_json)
     return normalized, "Grievance registered successfully."
+
 
 
 def save_as_new_issue(collection, data, vector, user_name, new_json=None):
