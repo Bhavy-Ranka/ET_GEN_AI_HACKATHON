@@ -11,15 +11,14 @@ except ModuleNotFoundError:
     genai = None
 
 
-_GEMINI_API_KEY = ""
-
+_GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 def _get_genai_client():
     if genai is None:
         raise RuntimeError(
             "google-genai is not installed. Install it with: pip install google-genai"
         )
-    api_key = os.getenv("GEMINI_API_KEY", _GEMINI_API_KEY).strip()
+    api_key = _GEMINI_API_KEY
     if not api_key:
         raise RuntimeError(
             "GEMINI_API_KEY is not set. Please export it before calling extract_text()."
