@@ -65,7 +65,6 @@ def ensure_collection(db, collection_name: str = "grievances", validation_level:
             validationLevel=validation_level,
         )
         return db[collection_name]
-
     try:
         db.command(
             {
@@ -75,22 +74,14 @@ def ensure_collection(db, collection_name: str = "grievances", validation_level:
             }
         )
     except Exception:
-        # If the deployment doesn't allow collMod, leave existing collection as-is.
         pass
     return db[collection_name]
 
 
 def ensure_indexes(collection):
-    """
-    Recommended indexes for common filters.
-    """
     collection.create_index([("status", 1), ("category", 1)])
 
-
 def vector_index_spec(num_dimensions: int, path: str = "embedding") -> Dict[str, Any]:
-    """
-    Atlas Vector Search index spec. Use with createSearchIndex in Atlas.
-    """
     return {
         "fields": [
             {"type": "vector", "path": path, "numDimensions": num_dimensions, "similarity": "cosine"},
