@@ -31,7 +31,7 @@ def _get_groq_client():
         raise RuntimeError(
             "groq package is not installed. Install it with: pip install groq"
         )
-    api_key = os.getenv("GROK_API_KEY", "").strip()
+    api_key = (os.getenv("GROK_API_KEY") or os.getenv("GROQ_API_KEY") or "").strip()
     if not api_key:
         raise RuntimeError(
             "GROK_API_KEY is not set. Please export it before calling grievance_pipeline()."
@@ -109,8 +109,6 @@ def grievance_pipeline(image_path, raw_location, user_text):
     if not image_description:
         image_description = "Image description unavailable."
         
-    # print(image_description)
-
     prompt = f"""
     You are a Municipal Grievance Analyzer. Combine the following inputs into a structured JSON report.
 
@@ -121,7 +119,10 @@ def grievance_pipeline(image_path, raw_location, user_text):
     Rules:
     - Output JSON only (no markdown).
     - Category must be one of: Waste Management, Road, Water, Electricity, Others.
-    - Severity must be one of: Low, Medium, High.
+    - Severity must be evaluated strictly based on the following criteria:
+      * "High": Immediate safety hazard, structural damage, active environmental/health risk, main road obstruction, live electrical wire, water main burst, or sewage overflow.
+      * "Medium": Moderate traffic/service disruption, local road pothole, uncollected garbage heap, flickering streetlight, or minor pipe leakage.
+      * "Low": Minor cosmetic issue, non-urgent public maintenance, small litter item, or faded road markings.
     - Keep the location clean but do not invent new details.
 
     Output Format:
@@ -134,6 +135,7 @@ def grievance_pipeline(image_path, raw_location, user_text):
         "tags": ["tag1", "tag2"]
     }}
     """
+
 
     payload = None
     if Groq is not None:
@@ -170,21 +172,6 @@ def grievance_pipeline(image_path, raw_location, user_text):
         payload.get("formatted_location") or raw_location
     )
     tags = _normalize_tags(payload.get("tags"))
-    print(
-        {
-            "issue_title": issue_title,
-            "detailed_description": detailed_description,
-            # "category": category,
-            # "severity": severity,
-            # "formatted_location": formatted_location,
-            # "tags": tags,
-            # "priority": _severity_to_priority(severity),
-            # "report_count": 1,
-            # "status": "open",
-            # "raw_location": _normalize_location(raw_location),
-            # "image_path": image_path,
-        }
-    )
 
     return {
         "issue_title": issue_title,
@@ -199,12 +186,3 @@ def grievance_pipeline(image_path, raw_location, user_text):
         "raw_location": _normalize_location(raw_location),
         "image_path": image_path,
     }
-
-
-# if __name__ == "__main__":
-#     result = grievance_pipeline(
-#         "72314253.jpg",
-#         "Near IIT Indore Gate 2",
-#         "pani bhar gaya",
-#     )
-#     print(result)
