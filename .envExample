@@ -1,0 +1,30 @@
+GEMINI_API_KEY=
+GROK_API_KEY=
+
+# MongoDB Configuration
+MONGO_URI=mongodb://localhost:27017
+MONGO_DB=hack
+MONGO_COLLECTION=grievances
+MONGO_CANDIDATE_SCAN_LIMIT=500
+MONGO_VECTOR_INDEX=
+MONGO_VECTOR_PATH=embedding
+MONGO_NUM_CANDIDATES=50
+
+# Authentication & Security
+
+SECRET_KEY=
+
+ADMIN_EMAIL=
+
+ACCESS_TOKEN_EXPIRE_MINUTES=15
+REFRESH_TOKEN_EXPIRE_DAYS=7
+ALLOWED_ORIGINS=http://localhost:8501,http://127.0.0.1:8501
+
+# SMTP Email Configuration (For sending OTP from admin email)
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+-- enter the admin email
+SMTP_USERNAME=
+SMTP_PASSWORD=
+ALLOW_CONSOLE_OTP=true
+
