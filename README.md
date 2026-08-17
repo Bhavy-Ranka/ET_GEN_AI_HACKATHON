@@ -1,63 +1,79 @@
+#  AI Smart City — Intelligent Civic Grievance Management System
 
-
-# Intelligent Civic Grievance Management System
-
-> An AI-powered multi-agent platform for automated civic issue detection, deduplication, categorization, and resolution tracking — built for Indian smart cities.
+> An AI-powered multi-agent platform for automated civic issue detection, deduplication, objective severity scoring, and dynamic priority escalation — built for Indian smart cities.
 
 ---
 
 ##  Problem Statement
 
-Citizens report civic issues (potholes, garbage, broken lights, water leakage) through fragmented, manual channels. Municipalities receive thousands of duplicate complaints, lack priority intelligence, and have no automated triage. This results in SLA breaches, wasted resources, and unresolved issues.
+Citizens report civic issues (potholes, garbage heaps, broken streetlights, water leakage) through fragmented, manual channels. Municipalities receive thousands of duplicate complaints, lack priority intelligence, and have no automated triage. This results in SLA breaches, wasted resources, and unresolved issues.
 
-**AI Smart City** solves this with a fully autonomous, multi-agent AI pipeline that ingests a photo + text complaint, understands it using vision + LLM models, deduplicates it against a vector database, and routes it to the right authority — all without human intervention.
+**AI Smart City** solves this with a fully autonomous, multi-agent AI pipeline that ingests a photo + text complaint, understands it using vision + LLM models, deduplicates it against a vector database, objectively scores its severity, and dynamically escalates priority based on public report frequency — all without human intervention.
 
 ---
 
-## Features
+##  Features
 
-- **Vision AI** — Gemini 2.5 Flash analyzes uploaded images to detect civic issue type, severity, and surroundings
-- **LLM Structuring** — Llama 3.3 70B (via Groq) converts raw user text + image description into a structured JSON grievance report
-- **3-Stage Deduplication Pipeline** — Vector search → LLM location matching → cosine similarity threshold to prevent duplicate complaints
-- **Smart Location Normalization** — Tokenized location matching with LLM fallback for fuzzy address resolution
-- **Dual Database Architecture** — SQLite for user auth, MongoDB Atlas for vector-indexed grievance storage
-- **JWT Authentication** — Secure role-based access with admin and citizen roles
-- **Admin Dashboard** — Real-time severity-sorted complaint board with image preview and one-click resolution
-- **Auto Priority Escalation** — Report count and priority auto-incremented on duplicate detections
+- **Vision AI Analysis** — Gemini 2.5 Flash analyzes uploaded images to identify civic issue type, structural severity, and surroundings.
+- **LLM Report Structuring** — Llama 3.3 70B (via Groq) and Gemini Flash convert raw user text + image description into a structured JSON report.
+- **Objective Multi-Factor Severity Scoring** — Assesses baseline issue urgency (`High`, `Medium`, `Low`) strictly according to safety risk, infrastructure damage, and service disruption.
+- **3-Stage Deduplication Pipeline** — Vector Search $\rightarrow$ Multi-Provider LLM Location Verification $\rightarrow$ Calibrated Cosine Similarity (`0.35` threshold).
+- **Dynamic Report Count & Severity Escalation** — Duplicate reports automatically increment `report_count`, escalate issue `priority`, and dynamically upgrade severity (e.g., $\ge 4$ duplicate reports auto-escalates to `High` severity).
+- **Multi-Provider Resilient LLM Engine** — Graceful fallback chain (Groq LLM $\rightarrow$ Gemini 2.5 Flash $\rightarrow$ Fuzzy token address matcher) ensures zero downtime even during API rate limits.
+- **Secure 2-Step OTP Authentication** — Email + Password signup/login with 6-digit OTP email verification via SMTP, protected by short-lived JWT access tokens & 7-day refresh tokens.
+- **Dual Database Architecture** — SQLite + SQLAlchemy for user credentials & auth; MongoDB Atlas for vector-indexed grievance storage.
+- **Admin Dashboard** — Real-time severity-sorted complaint board with image previews, user tracking, and one-click resolution.
 
 ---
 
 ##  Architecture
 
 ```
-User (Streamlit Frontend)
-        │
-        ▼
-FastAPI Backend (REST API, JWT Auth)
-        │
-   ┌────┴────┐
-   │         │
-SQLite    AI Pipeline (gen_ai/)
-(Users)        │
-          ┌────┼────┐
-          │    │    │
-     Gemini  Groq  Gemini
-     Vision  LLM  Embeddings
-     (img)  (RAG) (match)
-               │
-          MongoDB Atlas
-          (Vector Store)
+                      User (Streamlit Frontend)
+                                  │
+                                  ▼
+                 FastAPI Backend (REST API, JWT Auth)
+                                  │
+            ┌─────────────────────┴─────────────────────┐
+            │                                           │
+   SQLite Database                              AI Pipeline (gen_ai/)
+(Users & Credentials)                                   │
+                                      ┌─────────────────┼─────────────────┐
+                                      │                 │                 │
+                                Gemini Vision       Groq LLM       Gemini Embeddings
+                                 (Image Text)      (RAG Struct)      (Vector Match)
+                                      │                 │                 │
+                                      └─────────────────┼─────────────────┘
+                                                        │
+                                                  MongoDB Atlas
+                                               (Vector & Metadata)
 ```
 
-### AI Pipeline Stages
+### AI Pipeline & Deduplication Stages
 
-| Stage | Module | Model | Role |
-|-------|--------|-------|------|
-| Image Analysis | `image_processing.py` | Gemini 2.5 Flash | Describe civic issue from photo |
-| Grievance Structuring | `rag.py` | Llama 3.3 70B (Groq) | JSON report generation |
-| Vector Embedding | `match.py` | Gemini Embedding 001 | Semantic similarity encoding |
-| Location Matching | `match.py` | Llama 3.3 70B (Groq) | Fuzzy address deduplication |
-| Duplicate Detection | `match.py` | Cosine Similarity | Threshold-based dedup |
+| Stage | Module | Model / Engine | Role |
+|-------|--------|----------------|------|
+| **Image Analysis** | `image_processing.py` | Gemini 2.5 Flash | Extract visual context from photo |
+| **Grievance Structuring** | `rag.py` | Llama 3.3 70B / Gemini Flash | Multi-factor severity scoring & JSON generation |
+| **Vector Embedding** | `match.py` | Gemini Embedding 001 | Semantic vector encoding |
+| **Candidate Retrieval** | `match.py` | MongoDB Atlas Vector Search | Query vector nearest neighbors (with scan fallback) |
+| **Location Verification** | `match.py` | Groq / Gemini 2.5 Flash | Fuzzy landmark & address matching |
+| **Duplicate Escalation** | `match.py` | Cosine Similarity (<0.35) | Auto-increment report count & escalate priority/severity |
+
+---
+
+##  Severity Scoring Matrix & Escalation Rules
+
+### 1. Baseline Severity Scoring (Vision + LLM Analysis)
+- 🔴 **High (Score 3)**: Immediate safety hazards, structural damage, active health risks, main road obstructions, live electrical wires, water main bursts, or sewage overflows.
+- 🟡 **Medium (Score 2)**: Moderate traffic/service disruptions, local road potholes, uncollected garbage heaps, flickering streetlights, or minor pipe leakages.
+- 🟢 **Low (Score 1)**: Minor cosmetic issues, non-urgent public maintenance, small litter items, or faded road markings.
+
+### 2. Dynamic Escalation Engine
+When duplicate complaints are submitted for an active issue:
+- **Report 1**: Initial report filed with baseline severity and priority.
+- **Report 2–3**: `report_count`, priority increases, `Low` severity upgrades to `Medium`.
+- **Report 4+**: Issue automatically escalates to **High Severity** and surfaces at the top of the Admin Triage board.
 
 ---
 
@@ -65,15 +81,15 @@ SQLite    AI Pipeline (gen_ai/)
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Streamlit |
-| Backend | FastAPI + Uvicorn |
-| Vision AI | Google Gemini 2.5 Flash |
-| LLM | Meta Llama 3.3 70B via Groq |
-| Embeddings | Google Gemini Embedding 001 |
-| Vector DB | MongoDB Atlas (Vector Search) |
-| Auth DB | SQLite + SQLAlchemy |
-| Auth | JWT (python-jose) + bcrypt |
-| Process Mgmt | Python subprocess orchestration |
+| **Frontend** | Streamlit |
+| **Backend** | FastAPI + Uvicorn |
+| **Vision AI** | Google Gemini 2.5 Flash |
+| **LLM Engine** | Meta Llama 3.3 70B (Groq) & Google Gemini 2.5 Flash |
+| **Embeddings** | Google Gemini Embedding 001 (`text-embedding-004`) |
+| **Vector DB** | MongoDB Atlas (Vector Search & Metadata Store) |
+| **Auth DB** | SQLite + SQLAlchemy |
+| **Auth & Security** | JWT (`python-jose`) + `passlib` bcrypt + SMTP Email OTP |
+| **Process Manager** | Python subprocess orchestration (`run_app.py`) |
 
 ---
 
@@ -84,19 +100,20 @@ ET/
 ├── README.md
 ├── requirement.txt
 ├── run_app.py                  # Orchestrator: launches backend + frontend
+├── .env                        # Central environment configuration
 └── src/
     ├── backend/
-    │   ├── main.py             # FastAPI app, routes, CORS
-    │   ├── authentication.py   # JWT auth, signup/login
-    │   ├── database.py         # SQLAlchemy models (User, Complaint)
+    │   ├── main.py             # FastAPI REST routes, CORS, image service
+    │   ├── authentication.py   # 2-Step OTP Auth, JWT tokens, SMTP dispatcher
+    │   ├── database.py         # SQLite models & schema auto-migration
     │   └── gen_ai/
-    │       ├── ai_main.py      # Pipeline entry point
-    │       ├── image_processing.py  # Gemini Vision
-    │       ├── rag.py          # LLM grievance structuring
-    │       ├── match.py        # Deduplication + MongoDB ops
-    │       └── model.py        # MongoDB schema + vector index spec
+    │       ├── ai_main.py      # AI pipeline entry point
+    │       ├── image_processing.py  # Gemini Vision AI
+    │       ├── rag.py          # LLM structuring & severity matrix
+    │       ├── match.py        # 3-stage deduplication & escalation engine
+    │       └── model.py        # MongoDB schema & vector index spec
     └── frontend/
-        └── app.py              # Streamlit UI (citizen + admin views)
+        └── app.py              # Streamlit UI (Citizen portal & Admin Triage)
 ```
 
 ---
@@ -105,9 +122,10 @@ ET/
 
 ### Prerequisites
 - Python 3.10+
-- MongoDB Atlas account (free tier works)
+- MongoDB Atlas account (free tier compatible)
 - Google Gemini API key
-- Groq API key
+- Groq API key (optional fallback)
+- Gmail account with **App Password** (for SMTP OTP delivery)
 
 ### 1. Clone the Repository
 ```bash
@@ -120,86 +138,30 @@ cd ET
 pip install -r requirement.txt
 ```
 
-### 3. Set Environment Variables
-```bash
-export GEMINI_API_KEY="your_gemini_api_key"
-export GROK_API_KEY="your_groq_api_key"
-export MONGO_URI="your_mongodb_atlas_connection_string"
-export MONGO_DB="hack"
-export MONGO_COLLECTION="grievances"
-export MONGO_VECTOR_INDEX="your_vector_index_name"   # optional, enables Atlas Vector Search
-```
+### 3. Configure Environment Variables
+Create a `.env` file in the root directory:
 
 ### 4. Run the Application
 ```bash
 python run_app.py
 ```
 
-This starts:
-- **Backend** → `http://127.0.0.1:8000`
-- **Frontend** → `http://localhost:8501`
+This single command launches:
+- **Backend API** $\rightarrow$ `http://127.0.0.1:8000`
+- **Streamlit Web UI** $\rightarrow$ `http://localhost:8501`
 
 ---
 
-##  Authentication
+##  Authentication & Roles
 
-| Role | Access |
-|------|--------|
-| Citizen | Submit complaints, view results |
-| Admin (`BHAVY`, `SMARTYY`) | Dashboard with all complaints, severity triage, resolve issues |
-
-Admin credentials are environment-hardened. Regular users sign up via the UI.
+| Role | Capabilities | Verification |
+|------|--------------|--------------|
+| **Citizen** | Register account, submit photo/text grievances, view real-time complaint status | Email + Password + 6-Digit Email OTP |
+| **Admin** (`admin_email_id`) | Priority triage dashboard, view all grievances by severity column, resolve issues | Admin Role Token + JWT Refresh |
 
 ---
 
-## How the AI Pipeline Works
-
-1. **Citizen uploads** a photo of a civic issue (pothole, garbage, etc.) with a text description and location
-2. **Gemini Vision** analyzes the image and returns a natural language description of the issue
-3. **Groq LLM** combines image description + user text + location into a structured JSON:
-   ```json
-   {
-     "issue_title": "Large pothole on main road",
-     "category": "Road",
-     "severity": "High",
-     "formatted_location": "Near IIT Indore Gate 2",
-     "tags": ["pothole", "road damage"],
-     "detailed_description": "..."
-   }
-   ```
-4. **Gemini Embeddings** convert the description into a semantic vector
-5. **MongoDB Vector Search** finds similar existing complaints
-6. **Groq LLM location check** confirms if it's the same physical location
-7. **Cosine similarity** makes the final dedup decision:
-   - If duplicate → increments `report_count` and `priority` on existing record
-   - If new → saved as fresh grievance with full metadata
-
----
-
-##  Admin Dashboard
-
-Admins see complaints sorted into three real-time columns:
-
-| 🔴 High Severity | 🟡 Medium Severity | 🟢 Low Severity |
-|------------------|-------------------|-----------------|
-| Immediate action | Schedule soon | Monitor |
-
-Each complaint card shows image, description, reporter, location, and a **Mark Resolved** button that removes it from the active queue.
-
----
-
-##  Real-World Impact
-
-- **Deduplication** prevents the same pothole from being filed 50 times, saving municipality processing time
-- **Auto-prioritization** ensures high-severity issues surface first without manual sorting
-- **Audit trail** — every complaint stored with user, timestamp, severity, category, and image
-- **Scalable** — MongoDB Atlas vector search scales to millions of records
-
----
-
-
-##  Team
+## 👥 Team
 
 - **Bhavy Ranka**
-
 - **Aditya Rai**
