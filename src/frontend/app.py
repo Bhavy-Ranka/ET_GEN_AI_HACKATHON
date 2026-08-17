@@ -1,10 +1,10 @@
+import os
 import streamlit as st
 import requests
 
 BASE_URL = "http://127.0.0.1:8000"
 
 st.set_page_config(page_title="AI-Smart City", layout="wide")
-
 
 st.markdown("""
 <style>
@@ -13,8 +13,8 @@ st.markdown("""
         border: 1px solid #2e6da4;
         border-radius: 12px;
         padding: 32px 36px;
-        max-width: 420px;
-        margin: 60px auto 0 auto;
+        max-width: 450px;
+        margin: 40px auto 0 auto;
         box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     }
     .auth-title {
@@ -29,13 +29,6 @@ st.markdown("""
         color: #7aafd4;
         font-size: 13px;
         text-align: center;
-        margin-bottom: 24px;
-    }
-    .tab-row {
-        display: flex;
-        border-radius: 8px;
-        overflow: hidden;
-        border: 1px solid #2e6da4;
         margin-bottom: 24px;
     }
     .user-badge {
@@ -54,106 +47,219 @@ if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "token" not in st.session_state:
     st.session_state["token"] = None
+if "refresh_token" not in st.session_state:
+    st.session_state["refresh_token"] = None
 if "username" not in st.session_state:
     st.session_state["username"] = None
 if "auth_mode" not in st.session_state:
     st.session_state["auth_mode"] = "Login"
+if "login_step" not in st.session_state:
+    st.session_state["login_step"] = 1
+if "signup_step" not in st.session_state:
+    st.session_state["signup_step"] = 1
+if "pending_email" not in st.session_state:
+    st.session_state["pending_email"] = None
+
+
+def safe_json_response(resp):
+    try:
+        return resp.json()
+    except Exception:
+        return {"detail": f"Server returned error HTTP {resp.status_code}. Response: {resp.text[:150]}"}
+
+
+def refresh_access_token():
+    """Attempts to refresh access token using refresh_token."""
+    refresh_tok = st.session_state.get("refresh_token")
+    if not refresh_tok:
+        return False
+    try:
+        resp = requests.post(f"{BASE_URL}/refresh", json={"refresh_token": refresh_tok})
+        if resp.status_code == 200:
+            data = safe_json_response(resp)
+            st.session_state["token"] = data["access_token"]
+            st.session_state["refresh_token"] = data["refresh_token"]
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def authenticated_request(method: str, url: str, **kwargs):
+    """Sends authenticated request with auto-refresh mechanism for expired tokens."""
+    headers = kwargs.get("headers", {})
+    headers["Authorization"] = f"Bearer {st.session_state.get('token')}"
+    kwargs["headers"] = headers
+
+    response = requests.request(method, url, **kwargs)
+    if response.status_code == 401:
+        if refresh_access_token():
+            headers["Authorization"] = f"Bearer {st.session_state.get('token')}"
+            kwargs["headers"] = headers
+            response = requests.request(method, url, **kwargs)
+        else:
+            st.session_state.clear()
+            st.rerun()
+    return response
 
 
 def auth_page():
     st.markdown("<h1 style='text-align:center;color:#d0e8ff;letter-spacing:2px;margin-top:20px;'>🏙️ AI SMART CITY</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align:center;color:#7aafd4;margin-bottom:0;'>Intelligent Urban Complaint Management</p>", unsafe_allow_html=True)
 
-    _, mid, _ = st.columns([1, 1.6, 1])
+    _, mid, _ = st.columns([1, 2, 1])
     with mid:
-        col_l, col_r = st.columns(2)
-        with col_l:
-            if st.button("🔑  Login", use_container_width=True,
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(" Login", use_container_width=True,
                          type="primary" if st.session_state["auth_mode"] == "Login" else "secondary"):
                 st.session_state["auth_mode"] = "Login"
+                st.session_state["login_step"] = 1
                 st.rerun()
-        with col_r:
-            if st.button("✏️  Sign Up", use_container_width=True,
+        with col2:
+            if st.button("Sign Up", use_container_width=True,
                          type="primary" if st.session_state["auth_mode"] == "Sign Up" else "secondary"):
                 st.session_state["auth_mode"] = "Sign Up"
+                st.session_state["signup_step"] = 1
                 st.rerun()
 
         st.markdown("---")
 
         if st.session_state["auth_mode"] == "Login":
             st.markdown("<div class='auth-title'>Welcome Back</div>", unsafe_allow_html=True)
-            st.markdown("<div class='auth-subtitle'>Sign in to continue</div>", unsafe_allow_html=True)
 
-            username = st.text_input("Username", key="login_user", placeholder="Enter username")
-            password = st.text_input("Password", type="password", key="login_pass", placeholder="Enter password")
+            if st.session_state["login_step"] == 1:
+                st.markdown("<div class='auth-subtitle'>Step 1: Enter your Email ID and Password</div>", unsafe_allow_html=True)
 
-            if st.button("Login →", use_container_width=True, type="primary"):
-                if not username.strip() or not password.strip():
-                    st.warning("Please fill in both fields.")
-                else:
-                    try:
-                        resp = requests.post(
-                            f"{BASE_URL}/login",
-                            data={"username": username, "password": password},
-                            headers={"Content-Type": "application/x-www-form-urlencoded"}
-                        )
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            st.session_state["logged_in"] = True
-                            st.session_state["token"] = data["access_token"]
-                            st.session_state["username"] = username
-                            st.success(f"Welcome back, **{username}**! 🎉")
-                            st.rerun()
-                        else:
-                            detail = resp.json().get("detail", "Login failed.")
-                            st.error(f"❌ {detail}")
-                    except requests.exceptions.ConnectionError:
-                        st.error("Cannot connect to the backend. Is it running?")
+                email = st.text_input("Email ID", key="login_email", placeholder="user@example.com")
+                password = st.text_input("Password", type="password", key="login_pass", placeholder="Enter password")
 
-        else:
+                if st.button("Send OTP →", use_container_width=True, type="primary"):
+                    if not email.strip() or not password.strip():
+                        st.warning("Please fill in both email and password.")
+                    else:
+                        try:
+                            resp = requests.post(f"{BASE_URL}/login/request-otp", json={"email": email, "password": password})
+                            data = safe_json_response(resp)
+                            if resp.status_code == 200:
+                                st.session_state["pending_email"] = email.strip().lower()
+                                st.session_state["login_step"] = 2
+                                st.success("OTP sent to your email inbox!")
+                                st.rerun()
+                            else:
+                                detail = data.get("detail", "Failed to send OTP.")
+                                st.error(f" {detail}")
+                        except requests.exceptions.ConnectionError:
+                            st.error("Cannot connect to backend. Is it running?")
+
+            else:  # Step 2: OTP Verification
+                st.markdown(f"<div class='auth-subtitle'>Step 2: Enter 6-digit OTP sent to <b>{st.session_state['pending_email']}</b></div>", unsafe_allow_html=True)
+
+                otp_code = st.text_input("6-Digit Verification OTP", key="login_otp", placeholder="123456")
+
+                if st.button("Verify OTP & Login →", use_container_width=True, type="primary"):
+                    if not otp_code.strip():
+                        st.warning("Please enter the 6-digit OTP code.")
+                    else:
+                        try:
+                            payload = {"email": st.session_state["pending_email"], "otp": otp_code.strip()}
+                            resp = requests.post(f"{BASE_URL}/login/verify-otp", json=payload)
+                            data = safe_json_response(resp)
+                            if resp.status_code == 200:
+                                st.session_state["logged_in"] = True
+                                st.session_state["token"] = data["access_token"]
+                                st.session_state["refresh_token"] = data["refresh_token"]
+                                st.session_state["username"] = data["user"]["email"]
+                                st.session_state["login_step"] = 1
+                                st.success(f"Welcome back, **{data['user']['email']}**! ")
+                                st.rerun()
+                            else:
+                                detail = data.get("detail", "OTP verification failed.")
+                                st.error(f" {detail}")
+                        except requests.exceptions.ConnectionError:
+                            st.error("Cannot connect to backend. Is it running?")
+
+                if st.button("← Back / Change Email", use_container_width=True, type="secondary"):
+                    st.session_state["login_step"] = 1
+                    st.rerun()
+
+        else:  # Sign Up Mode
             st.markdown("<div class='auth-title'>Create Account</div>", unsafe_allow_html=True)
-            st.markdown("<div class='auth-subtitle'>Join AI Smart City today</div>", unsafe_allow_html=True)
 
-            new_user = st.text_input("Choose a Username", key="signup_user", placeholder="Enter username")
-            new_pass = st.text_input("Choose a Password", type="password", key="signup_pass", placeholder="Min 6 characters")
-            confirm_pass = st.text_input("Confirm Password", type="password", key="signup_confirm", placeholder="Re-enter password")
+            if st.session_state["signup_step"] == 1:
+                st.markdown("<div class='auth-subtitle'>Step 1: Enter Email & Choose Password</div>", unsafe_allow_html=True)
 
-            if st.button("Create Account →", use_container_width=True, type="primary"):
-                if not new_user.strip() or not new_pass.strip():
-                    st.warning("Please fill in all fields.")
-                elif len(new_pass) < 6:
-                    st.warning("Password must be at least 6 characters.")
-                elif new_pass != confirm_pass:
-                    st.error("Passwords do not match.")
-                else:
-                    try:
-                        resp = requests.post(
-                            f"{BASE_URL}/signup",
-                            data={"username": new_user, "password": new_pass},
-                            headers={"Content-Type": "application/x-www-form-urlencoded"}
-                        )
-                        if resp.status_code == 200:
-                            st.success("Account created! Please log in.")
-                            st.session_state["auth_mode"] = "Login"
-                            st.rerun()
-                        else:
-                            detail = resp.json().get("detail", "Sign up failed.")
-                            st.error(f"❌ {detail}")
-                    except requests.exceptions.ConnectionError:
-                        st.error("Cannot connect to the backend. Is it running?")
+                new_email = st.text_input("Email ID", key="signup_email", placeholder="user@example.com")
+                new_pass = st.text_input("Choose Password", type="password", key="signup_pass", placeholder="Min 6 characters")
+                confirm_pass = st.text_input("Confirm Password", type="password", key="signup_confirm", placeholder="Re-enter password")
+
+                if st.button("Send Verification OTP →", use_container_width=True, type="primary"):
+                    if not new_email.strip() or not new_pass.strip():
+                        st.warning("Please fill in all fields.")
+                    elif "@" not in new_email:
+                        st.warning("Please enter a valid email address.")
+                    elif len(new_pass) < 6:
+                        st.warning("Password must be at least 6 characters.")
+                    elif new_pass != confirm_pass:
+                        st.error("Passwords do not match.")
+                    else:
+                        try:
+                            resp = requests.post(f"{BASE_URL}/signup/request-otp", json={"email": new_email, "password": new_pass})
+                            data = safe_json_response(resp)
+                            if resp.status_code == 200:
+                                st.session_state["pending_email"] = new_email.strip().lower()
+                                st.session_state["signup_step"] = 2
+                                st.success("OTP sent to your email inbox!")
+                                st.rerun()
+                            else:
+                                detail = data.get("detail", "Sign up OTP request failed.")
+                                st.error(f" {detail}")
+                        except requests.exceptions.ConnectionError:
+                            st.error("Cannot connect to backend. Is it running?")
+
+            else:  # Step 2: OTP Verification
+                st.markdown(f"<div class='auth-subtitle'>Step 2: Enter 6-digit OTP sent to <b>{st.session_state['pending_email']}</b></div>", unsafe_allow_html=True)
+
+                otp_code = st.text_input("6-Digit Verification OTP", key="signup_otp", placeholder="123456")
+
+
+
+                if st.button("Verify OTP & Create Account →", use_container_width=True, type="primary"):
+                    if not otp_code.strip():
+                        st.warning("Please enter the 6-digit OTP code.")
+                    else:
+                        try:
+                            payload = {"email": st.session_state["pending_email"], "otp": otp_code.strip()}
+                            resp = requests.post(f"{BASE_URL}/signup/verify-otp", json=payload)
+                            data = safe_json_response(resp)
+                            if resp.status_code == 200:
+                                st.session_state["logged_in"] = True
+                                st.session_state["token"] = data["access_token"]
+                                st.session_state["refresh_token"] = data["refresh_token"]
+                                st.session_state["username"] = data["user"]["email"]
+                                st.session_state["signup_step"] = 1
+                                st.success("Account created successfully! ")
+                                st.rerun()
+                            else:
+                                detail = data.get("detail", "Sign up verification failed.")
+                                st.error(f" {detail}")
+                        except requests.exceptions.ConnectionError:
+                            st.error("Cannot connect to backend. Is it running?")
+
+                if st.button("← Back / Change Details", use_container_width=True, type="secondary"):
+                    st.session_state["signup_step"] = 1
+                    st.rerun()
+
 
 
 def main_app():
     col_title, col_user = st.columns([5, 1])
     with col_title:
-        st.title("🏙️ AI SMART CITY")
+        st.title("AI SMART CITY")
     with col_user:
-        st.markdown(f"<div class='user-badge'>👤 {st.session_state['username']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='user-badge'>{st.session_state['username']}</div>", unsafe_allow_html=True)
         if st.button("Logout", type="secondary"):
-            for key in ["logged_in", "token", "username",
-                        "uploaded_filename", "uploaded_image",
-                        "confirmed_description", "confirmed_address"]:
-                st.session_state.pop(key, None)
+            st.session_state.clear()
             st.rerun()
 
     # ─── 1. Upload Section ───
@@ -164,8 +270,7 @@ def main_app():
         if st.button("Upload to Server"):
             files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
             try:
-                headers = {"Authorization": f"Bearer {st.session_state['token']}"}
-                response = requests.post(f"{BASE_URL}/uploadfile/", files=files, headers=headers)
+                response = authenticated_request("POST", f"{BASE_URL}/uploadfile/", files=files)
                 if response.status_code == 200:
                     st.session_state["uploaded_filename"] = uploaded_file.name
                     st.session_state["uploaded_image"] = uploaded_file.getvalue()
@@ -195,15 +300,14 @@ def main_app():
                 "filename": st.session_state["uploaded_filename"]
             }
             try:
-                headers = {"Authorization": f"Bearer {st.session_state['token']}"}
-                response = requests.post(f"{BASE_URL}/imageDescription", json=payload, headers=headers)
+                response = authenticated_request("POST", f"{BASE_URL}/imageDescription", json=payload)
                 if response.status_code == 200:
                     data = response.json()
                     if data.get("pipeline_warning"):
                         st.warning(data["pipeline_warning"])
                     st.session_state["confirmed_description"] = data.get("description")
                     st.session_state["confirmed_address"] = data.get("address") or address_input
-                    st.session_state["pipeline"] = data.get("pipeline", {})  # ADD THIS
+                    st.session_state["pipeline"] = data.get("pipeline", {})
                     st.success("Description uploaded successfully.")
                 else:
                     st.error(f"Failed to upload description. Status: {response.status_code}")
@@ -226,16 +330,16 @@ def main_app():
         with col_info:
             st.markdown(f"""
             <div style='background:#0d1b2a;border:1px solid #2e6da4;border-radius:12px;padding:20px;height:100%;'>
-                <h4 style='color:#d0e8ff;margin-top:0;'>📋 {pipeline.get("issue_title", "Civic Issue")}</h4>
+                <h4 style='color:#d0e8ff;margin-top:0;'>{pipeline.get("issue_title", "Civic Issue")}</h4>
                 <hr style='border-color:#2e6da4;'/>
-                <p style='color:#7aafd4;margin:6px 0;'><b style='color:#d0e8ff;'>📝 Description:</b><br>{st.session_state["confirmed_description"]}</p>
-                <p style='color:#7aafd4;margin:6px 0;'><b style='color:#d0e8ff;'>📍 Address:</b> {st.session_state.get("confirmed_address", "N/A")}</p>
-                <p style='color:#7aafd4;margin:6px 0;'><b style='color:#d0e8ff;'>📂 Category:</b> {pipeline.get("category", "N/A")}</p>
-                <p style='margin:6px 0;'><b style='color:#d0e8ff;'>⚠️ Severity:</b> 
+                <p style='color:#7aafd4;margin:6px 0;'><b style='color:#d0e8ff;'> Description:</b><br>{st.session_state["confirmed_description"]}</p>
+                <p style='color:#7aafd4;margin:6px 0;'><b style='color:#d0e8ff;'> Address:</b> {st.session_state.get("confirmed_address", "N/A")}</p>
+                <p style='color:#7aafd4;margin:6px 0;'><b style='color:#d0e8ff;'> Category:</b> {pipeline.get("category", "N/A")}</p>
+                <p style='margin:6px 0;'><b style='color:#d0e8ff;'> Severity:</b> 
                     <span style='background:{severity_color};color:#fff;padding:2px 10px;border-radius:12px;font-weight:bold;'>{severity}</span>
                 </p>
-                <p style='color:#7aafd4;margin:6px 0;'><b style='color:#d0e8ff;'>🤖 AI Summary:</b><br>{pipeline.get("detailed_description", "N/A")}</p>
-                <p style='color:#7aafd4;margin:6px 0;'><b style='color:#d0e8ff;'>🏷️ Tags:</b> {", ".join(pipeline.get("tags", [])) or "N/A"}</p>
+                <p style='color:#7aafd4;margin:6px 0;'><b style='color:#d0e8ff;'> AI Summary:</b><br>{pipeline.get("detailed_description", "N/A")}</p>
+                <p style='color:#7aafd4;margin:6px 0;'><b style='color:#d0e8ff;'> Tags:</b> {", ".join(pipeline.get("tags", [])) or "N/A"}</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -243,7 +347,7 @@ def main_app():
 def admin_panel():
     col_title, col_user = st.columns([5, 1])
     with col_title:
-        st.title("🏙️ Admin Dashboard")
+        st.title("Admin Dashboard")
     with col_user:
         st.markdown(f"<div class='user-badge'>🛡️ {st.session_state['username']}</div>", unsafe_allow_html=True)
         if st.button("Logout", type="secondary"):
@@ -252,23 +356,19 @@ def admin_panel():
 
     st.divider()
 
-    headers = {"Authorization": f"Bearer {st.session_state['token']}"}
     try:
-        resp = requests.get(f"{BASE_URL}/admin/complaints", headers=headers)
+        resp = authenticated_request("GET", f"{BASE_URL}/admin/complaints")
         if resp.status_code == 200:
             all_complaints = resp.json()
-            
+
             if not all_complaints:
                 st.info("No active complaints.")
                 return
 
-            # --- SEPARATION LOGIC ---
             high_sev = [c for c in all_complaints if c.get('severity') == "High"]
             med_sev = [c for c in all_complaints if c.get('severity') == "Medium"]
             low_sev = [c for c in all_complaints if c.get('severity', 'Low') not in ["High", "Medium"]]
 
-            # --- UI LAYOUT ---
-            # Define columns for the three categories
             col1, col2, col3 = st.columns(3)
 
             sections = [
@@ -281,31 +381,28 @@ def admin_panel():
                 with column:
                     st.markdown(f"<h3 style='text-align:center; color:{color};'>{title}</h3>", unsafe_allow_html=True)
                     st.markdown(f"<div style='border-bottom: 2px solid {color}; margin-bottom:15px;'></div>", unsafe_allow_html=True)
-                    
+
                     if not data:
-                        st.write("✨ Clear")
-                    
+                        st.write(" Clear")
+
                     for c in data:
                         with st.container():
-                            # Styling each card
                             st.markdown(f"""
                             <div style='border: 1px solid {color}; border-radius: 10px; padding: 10px; margin-bottom: 10px; background-color: rgba(0,0,0,0.2);'>
                                 <p style='margin:0; font-weight:bold;'>{c.get('issue_title', 'Untitled')}</p>
                                 <p style='font-size: 0.8em; color: #7aafd4;'>📍 {c.get('formatted_location', 'Unknown')}</p>
                             </div>
                             """, unsafe_allow_html=True)
-                            
-                            # Detail expander
+
                             with st.expander("View Details"):
                                 if c.get('image_path'):
-                                    img_name = c['image_path'].split('/')[-1]
+                                    img_name = os.path.basename(c['image_path'].replace('\\', '/'))
                                     st.image(f"{BASE_URL}/view/{img_name}", use_container_width=True)
                                 st.write(f"**Reported by:** {c.get('user_name')}")
                                 st.write(f"**Description:** {c.get('detailed_description')}")
-                                
-                                # --- THE DONE BUTTON ---
-                                if st.button(f"✅ Mark Resolved", key=f"btn_{c['_id']}"):
-                                    del_resp = requests.delete(f"{BASE_URL}/admin/complaints/{c['_id']}", headers=headers)
+
+                                if st.button(f" Mark Resolved", key=f"btn_{c['_id']}"):
+                                    del_resp = authenticated_request("DELETE", f"{BASE_URL}/admin/complaints/{c['_id']}")
                                     if del_resp.status_code == 200:
                                         st.success("Resolved!")
                                         st.rerun()
@@ -318,7 +415,7 @@ def admin_panel():
         st.error(f"Error: {e}")
 
 
-ADMIN_USERS = ["BHAVY", "SMARTYY"]
+ADMIN_USERS = ["bhavyranka@gmail.com"]
 
 if st.session_state["logged_in"]:
     if st.session_state["username"] in ADMIN_USERS:
