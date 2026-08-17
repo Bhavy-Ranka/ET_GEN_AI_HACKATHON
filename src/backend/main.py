@@ -6,26 +6,33 @@ from pydantic import BaseModel
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from database import ComplaintDB, SessionLocal
+from sqlalchemy.orm import Session
+from database import ComplaintDB, get_db
 from authentication import router as auth_router, get_current_user
 
-# PYTHONPATH is set by run_app.py, so this just works
 try:
     from gen_ai.ai_main import run_pipeline
-    # fromfrom gen_ai.ai_main import run_pipeline
-#  import run_pipeline  # PYTHONPATH set by run_app.py
     _PIPELINE_AVAILABLE = True
-    print("ha bhai ho gai!!")
 except Exception as _err:
     _PIPELINE_AVAILABLE = False
     print(f"[WARNING] gen_ai pipeline could not be imported: {_err}")
 
-print("ndnwej")
 app = FastAPI()
+
+origins_env = os.getenv("ALLOWED_ORIGINS", "").strip()
+if origins_env:
+    allowed_origins = [o.strip() for o in origins_env.split(",") if o.strip()]
+else:
+    allowed_origins = [
+        "http://localhost:8501",
+        "http://127.0.0.1:8501",
+        "http://localhost:3000",
+        "http://127.0.0.1:8000",
+    ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,35 +50,43 @@ class DescriptionRequest(BaseModel):
     filename: str
 
 
-@app.post("/files/")
-async def create_file(file: Annotated[bytes, File()]):
-    file_path = os.path.join(UPLOAD_DIR, "latest_bytes_upload.bin")
-    with open(file_path, "wb") as f:
-        f.write(file)
-    return {"file_size": len(file), "saved_as": "latest_bytes_upload.bin"}
+
+def _get_safe_upload_path(filename: str) -> str:
+    safe_name = os.path.basename(filename)
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    abs_upload_dir = os.path.abspath(UPLOAD_DIR)
+    target_path = os.path.abspath(os.path.join(abs_upload_dir, safe_name))
+    if not target_path.startswith(abs_upload_dir):
+        raise HTTPException(status_code=400, detail="Invalid file path.")
+    return target_path
 
 
 @app.post("/uploadfile/")
 async def create_upload_file(file: UploadFile, current_user: str = Depends(get_current_user)):
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    safe_filename = os.path.basename(file.filename)
+    file_path = _get_safe_upload_path(safe_filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    return {"filename": file.filename, "status": "Saved successfully"}
+    return {"filename": safe_filename, "status": "Saved successfully"}
 
 
 @app.post("/imageDescription")
-async def give_description(req: DescriptionRequest, current_user: str = Depends(get_current_user)):
-    # 1. Save complaint to SQLite DB
-    db = SessionLocal()
+async def give_description(
+    req: DescriptionRequest,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    safe_filename = os.path.basename(req.filename)
+    # 1. Save complaint to SQLite DB using dependency
     new_complaint = ComplaintDB(
         username=current_user,
         text=req.text,
         address=req.address,
-        filename=req.filename,
+        filename=safe_filename,
     )
     db.add(new_complaint)
     db.commit()
-    db.close()
 
     # 2. Run AI pipeline
     pipeline_result = {}
@@ -80,15 +95,18 @@ async def give_description(req: DescriptionRequest, current_user: str = Depends(
     if not _PIPELINE_AVAILABLE:
         pipeline_warning = "Pipeline unavailable at startup; skipping."
     else:
-        image_path = os.path.join(UPLOAD_DIR, req.filename)
-        if not os.path.isfile(image_path):
-            pipeline_warning = f"Image '{req.filename}' not found in uploads/; pipeline skipped."
-        else:
-            try:
-                pipeline_result = run_pipeline(image_path, req.address, req.text)
-            except Exception as exc:
-                pipeline_warning = f"Pipeline error: {exc}"
-                print(f"[ERROR] Pipeline failed: {exc}")
+        try:
+            image_path = _get_safe_upload_path(safe_filename)
+            if not os.path.isfile(image_path):
+                pipeline_warning = f"Image '{safe_filename}' not found in uploads/; pipeline skipped."
+            else:
+                try:
+                    pipeline_result = run_pipeline(image_path, req.address, req.text, user_name=current_user)
+                except Exception as exc:
+                    pipeline_warning = f"Pipeline error: {exc}"
+                    print(f"[ERROR] Pipeline failed: {exc}")
+        except HTTPException as e:
+            pipeline_warning = f"Invalid filename: {e.detail}"
 
     response = {
         "status": "Complaint Saved",
@@ -103,15 +121,18 @@ async def give_description(req: DescriptionRequest, current_user: str = Depends(
 
 
 @app.get("/view/{filename}")
-async def view_image(filename: str):
-    file_path = os.path.join(UPLOAD_DIR, filename)
+async def view_image(filename: str, current_user: str = Depends(get_current_user)):
+    try:
+        file_path = _get_safe_upload_path(filename)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail=f"File {filename} not found on server.")
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail=f"File {filename} not found on server.")
     return FileResponse(file_path)
 
 @app.get("/admin/complaints")
 async def get_all_complaints(current_user: str = Depends(get_current_user)):
-    if current_user not in ["BHAVY", "SMARTYY"]:
+    if current_user != "bhavyranka@gmail.com":
         raise HTTPException(status_code=403, detail="Not authorized as admin")
     
     try:
@@ -131,7 +152,7 @@ async def get_all_complaints(current_user: str = Depends(get_current_user)):
     
 @app.delete("/admin/complaints/{complaint_id}")
 async def delete_complaint(complaint_id: str, current_user: str = Depends(get_current_user)):
-    if current_user not in ["BHAVY", "SMARTYY"]:
+    if current_user != "bhavyranka@gmail.com":
         raise HTTPException(status_code=403, detail="Not authorized as admin")
     try:
         from pymongo import MongoClient
